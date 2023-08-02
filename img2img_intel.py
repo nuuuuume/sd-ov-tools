@@ -3,6 +3,7 @@ import os
 import datetime
 import time
 import argparse
+import json
 import numpy as np
 from optimum.intel import OVStableDiffusionImg2ImgPipeline
 from lauda import stopwatch
@@ -32,14 +33,14 @@ def resizeImage(image, scale):
 def no_safety_checker(images, **kwargs):
     return images, None
 
-def printEalased(watch, function):
+def printElapsed(watch, function):
     m, s = divmod(watch.elapsed_time, 60)
     h, m = divmod(m, 60)
     
-    print(f"<<< {h}:{m}:{s} spent.")
+    print(f"<<< {int(h)}:{int(m)}:{int(s)} spent.")
 
 
-@stopwatch(callback=printEalased)
+@stopwatch(callback=printElapsed)
 def main(args):
 
     """ StableDiffusionを使って画像を生成します。
@@ -65,10 +66,7 @@ def main(args):
 
     generator = np.random.RandomState(seed)
     
-    print(f"--- model from pretranined ... ")
-    
     compile = False if args.useGpu else True
-    dtype = np.float16 if args.useGpu else np.float32
 
     # 画像を開いて、Bicubicでリサイズ（ここでは劣化）、その後そのリサイズ後の画像にImg2Imgするらしい。
     srcImage = Image.open(args.srcImagePath).convert("RGB")
@@ -79,10 +77,9 @@ def main(args):
         
     modelName = os.path.splitext(os.path.basename(args.model))[0]
     print(f"--- model: {modelName}")
-    # openvinoでIntelGPUを使ってモデルの読み込み
+
     pipe = OVStableDiffusionImg2ImgPipeline.from_pretrained(
         args.model,
-        dtype=dtype,
         compile=False)
     pipe.scheduler = eval(args.scheduler).from_config(pipe.scheduler.config)
     pipe.reshape(batch_size=1,
@@ -113,11 +110,18 @@ def main(args):
         outputDir = args.outputDir
         os.makedirs(outputDir, exist_ok=True)
 
-        fileName = f"img2img_{modelName}_{now.strftime('%Y%m%d%H%M%S')}_{suffix:03}.png"
+        fileNameBase = f"img2img_{modelName}_{now.strftime('%Y%m%d%H%M%S')}_{suffix:03}"
+        fileName = f"{fileNameBase}.png"
         outputFilePath = os.path.join(outputDir, fileName)
         print(f"--- output file path: {outputFilePath}")
         image.save(outputFilePath)
         print(f"--- saved. {outputFilePath}")
+        if args.dumpSetting:
+            dumpFileName = f"{fileNameBase}.txt"
+            dumpFilePath = os.path.join(outputDir, dumpFileName)
+            with open(dumpFilePath, "w") as f:
+                json.dump(args.__dict__, f, ensure_ascii=False, indent=4)
+            print(f"--- setting dumped: {dumpFilePath}")
 
         suffix += 1
         del result.images[0]
@@ -140,21 +144,25 @@ if __name__ == '__main__':
     parser.add_argument('--src_image_path', 
                         dest='srcImagePath',
                         action='store', 
+                        type=str,
                         required=True,
                         help='input image path')
     parser.add_argument('--prompt', 
                         dest='prompt',
                         action='store', 
+                        type=str,
                         required=True,
                         help='prompt')
     parser.add_argument('--negative_prompt', 
                         dest='negativePrompt',
                         action='store', 
+                        type=str,
                         default="",
                         help='negative prompt')
     parser.add_argument('--output_dir', 
                         dest='outputDir',
                         action='store', 
+                        type=str,
                         required=True,
                         help='generated image saved here')
     parser.add_argument('--scale', 
@@ -165,6 +173,7 @@ if __name__ == '__main__':
                         help='scale image.')
     parser.add_argument('--num_images_per_prompt', 
                         dest='numImages',
+                        type=int,
                         action='store', 
                         default=1,
                         help='generate image num per prompt')
@@ -176,17 +185,20 @@ if __name__ == '__main__':
                         help='random seed')
     parser.add_argument('--guidance_scale', 
                         dest='guidanceScale',
+                        type=int,
                         action='store', 
                         default=7,
                         help='guidance scale')
     parser.add_argument('--steps', 
                         dest='steps',
                         action='store', 
+                        type=int,
                         default=50,
                         help='inference steps')
     parser.add_argument('--scheduler', 
                         dest='scheduler',
                         action='store',
+                        type=str,
                         choices=["DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
                         default="LMSDiscreteScheduler",
                         help='inference steps')
@@ -194,6 +206,12 @@ if __name__ == '__main__':
                         dest='useGpu', 
                         action='store_true', 
                         default=False)
+    parser.add_argument('--dump_setting', 
+                        dest='dumpSetting', 
+                        action='store_true', 
+                        default=False,
+                        help="dump i2i setting to file if True. default is False.")
+
 
     args = parser.parse_args()    
 

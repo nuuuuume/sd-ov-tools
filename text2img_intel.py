@@ -18,7 +18,7 @@ def printEalased(watch, function):
     m, s = divmod(watch.elapsed_time, 60)
     h, m = divmod(m, 60)
     
-    print(f"<<< {h}:{m}:{s} spent.")
+    print(f"<<< {int(h)}:{int(m)}:{int(s)} spent.")
 
 @stopwatch(callback=printEalased)
 def main(args):
@@ -37,7 +37,6 @@ def main(args):
 
     print(f"--- model from pretranined ... ")
     
-    compile = False if args.useGpu else True
     seed = args.seed if args.seed >= 0 else int(time.time())
     print(f"--- seed: {seed}")
 
@@ -45,18 +44,21 @@ def main(args):
     
     modelName = os.path.splitext(os.path.basename(args.model))[0]
     print(f"--- model: {modelName}")
-    # openvinoでIntelGPUを使ってモデルの読み込み
+    # openvinoで読み込み
     pipe = OVStableDiffusionPipeline.from_pretrained(
         args.model,
-        compile=compile)
+        compile=False)
+    pipe.reshape(batch_size=1,
+        height=args.height,
+        width=args.width,
+        num_images_per_prompt=args.numImages)
+
     pipe.scheduler = eval(args.scheduler).from_config(pipe.scheduler.config)
     if args.useGpu:
-        pipe.reshape(batch_size=1,
-            height=args.height,
-            width=args.width,
-            num_images_per_prompt=args.numImages)
+        # GPUを使う場合は以下を実行。t2iは動くけどi2iは画像が真っ黒になった（CPUだとi2iもちゃんとできる）
         pipe.to('GPU')
-        pipe.compile()    
+
+    pipe.compile()    
     
     suffix = 1
     result = pipe(prompt=args.prompt,
@@ -88,6 +90,7 @@ def main(args):
             dumpFilePath = os.path.join(outputDir, dumpFileName)
             with open(dumpFilePath, "w") as f:
                 json.dump(args.__dict__, f, ensure_ascii=False, indent=4)
+            print(f"--- setting dumped: {dumpFilePath}")
 
         suffix += 1
         del result.images[0]

@@ -30,15 +30,11 @@ def resizeImage(image, scale):
 
     return (image.resize((rw, rh), Image.Resampling.BICUBIC), rw, rh)    
     
-def no_safety_checker(images, **kwargs):
-    return images, None
-
 def printElapsed(watch, function):
     m, s = divmod(watch.elapsed_time, 60)
     h, m = divmod(m, 60)
     
     print(f"<<< {int(h)}:{int(m)}:{int(s)} spent.")
-
 
 @stopwatch(callback=printElapsed)
 def main(args):
@@ -63,6 +59,7 @@ def main(args):
     compile = False if args.useGpu else True
     seed = args.seed if args.seed >= 0 else int(time.time())
     print(f"--- seed: {seed}")
+    args.seed = seed
 
     generator = np.random.RandomState(seed)
     
@@ -91,7 +88,10 @@ def main(args):
         pipe.to('GPU')
     
     pipe.compile()    
-    
+
+    if pipe.safety_checker != None:
+        pipe.safety_checker = lambda images, **kwargs: (images, [False] * len(images))
+
     result = pipe(prompt=args.prompt,
         negative_prompt=args.negativePrompt,
         image=srcImage,
@@ -193,14 +193,14 @@ if __name__ == '__main__':
                         dest='steps',
                         action='store', 
                         type=int,
-                        default=50,
+                        default=20,
                         help='inference steps')
     parser.add_argument('--scheduler', 
                         dest='scheduler',
                         action='store',
                         type=str,
                         choices=["DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
-                        default="LMSDiscreteScheduler",
+                        default="DDIMScheduler",
                         help='inference steps')
     parser.add_argument('--gpu', 
                         dest='useGpu', 

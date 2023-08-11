@@ -14,12 +14,12 @@ def readJson(filePath):
     return ret
 
 def main(args):
-    """ text2img_intel.pyによって生成された画像と設定ダンプファイルをもとにimg2imgを実行します。
+    """ text2img_ov.pyによって生成された画像と設定ダンプファイルをもとにimg2imgを実行します。
     変換対象の画像と設定ダンプファイルを所定のフォルダに入れておくとそれら全てに対してimg2imgを実行します。
     """    
 
     venvPython = os.path.join("venv", "Scripts", "python.exe")
-    i2iPath = "img2img_intel.py"
+    i2iPath = "img2img_ov.py"
 
     # 処理の流れ
     # args.outputDirがなければ作成
@@ -30,7 +30,7 @@ def main(args):
     # なければその画像はスキップ
     # txtファイルをJSONとして開く
     # prompt, negativePrompt, を取得する
-    # argsの値と合体させてimg2img_intel.pyを実行する
+    # argsの値と合体させてimg2img_ov.pyを実行する
 
     if not os.path.isdir(args.inputDir):
         print(f"{args.inputDir} was not found...")
@@ -38,7 +38,7 @@ def main(args):
 
     inputPattern = os.path.join(args.inputDir, "*.png")
     inputPngFiles = glob.glob(inputPattern)
-    for i, inputFilePath in inputPngFiles:  
+    for i, inputFilePath in enumerate(inputPngFiles):  
         print(f"--- {i + 1}/{len(inputPngFiles)} : {inputFilePath} ...")
         # 同名のtxtファイルが必要（t2i時の設定ファイル）
         baseFilePath, ext = os.path.splitext(inputFilePath)
@@ -83,7 +83,7 @@ def main(args):
             args.outputDir,
         ]
         if(setting['dumpSetting']):
-            subArgs.append['--dump_setting']
+            subArgs.append('--dump_setting')
 
         print(f"{' '.join(subArgs)}")
         subprocess.run(subArgs)
@@ -121,13 +121,13 @@ if __name__ == '__main__':
     parser.add_argument('--steps', 
                         dest='steps',
                         action='store', 
-                        default=50,
+                        default=20,
                         help='inference steps')
     parser.add_argument('--scheduler', 
                         dest='scheduler',
                         action='store',
                         choices=["DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
-                        default="LMSDiscreteScheduler",
+                        default="DDIMScheduler",
                         help='inference steps')
     parser.add_argument('--seed',
                         type=int,

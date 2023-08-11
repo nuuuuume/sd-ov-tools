@@ -3,9 +3,9 @@ import os
 import datetime
 import json
 import torch
-from torch import autocast
-from diffusers import StableDiffusionPipeline
 from compel import Compel
+from torch import autocast
+from diffusers import StableDiffusionPipeline, UniPCMultistepScheduler
 from lauda import stopwatch
 
 
@@ -37,15 +37,16 @@ def main(args):
     """
     inputData = {
       "useGpu": False,
-      "model": "C:\\Users\\webnu\\source\\repos\\StableDiffusion\\stable-diffusion-webui\\models\\Stable-diffusion\\SakuraMix-v2.1.safetensors",
-      "prompt": "masterpiece, best quality, absurdres, ultra detailed beautiful face and large red eyes, 1girl, (flat chest)++, black frilled lolita dress, (short skirt with white inner color)++, (open mouth, happy).blend(), black hair, twintails with large white ribbons, (full body)++, (black over-the-knee-socks)++, no shoes",
-      "negativePrompt": "nsfw+++, (worst quality, low quality:1.4), (lip, nose, tooth, rouge, lipstick, eyeshadow:1.4), bad hands, mutated hands and fingers, bad feet, bad legs, flat color, flat shading, (jpeg artifacts:1.4), (depth of field, bokeh, blurry, film grain, chromatic aberration, lens flare:1.0), (1boy, abs, muscular, rib:1.0), greyscale, monochrome, dusty sunbeams, trembling, motion lines, motion blur, emphasis lines, text, title, logo, signature,",
+      "model": "C:\\Users\\webnu\\source\\repos\\StableDiffusion\\stable-diffusion-webui\\models\\Stable-diffusion\\AnzuMix-v1.safetensors",
+      "prompt": "crystal, 1girl, (flat chest:1.2), red eyes,  [black::10] long hair, pink frill thigh high socks, white frill camisole, light red short skirt, twintails, no shoes, (embarrassed), wariza, from above, upturned eyes, hand between legs, bed room, at night",
+      "negativePrompt": "nsfw, (worst quality, low quality:1.3), (lip, nose, tooth, rouge, lipstick, eyeshadow:1.4), bad hands, mutated hands and fingers, bad feet, bad legs, flat color, flat shading, (jpeg artifacts:1.4), (depth of field, bokeh, blurry, film grain, chromatic aberration, lens flare:1.0), (1boy, abs, muscular, rib:1.0), greyscale, monochrome, dusty sunbeams, trembling, motion lines, motion blur, emphasis lines, text, title, logo, signature,",
       "outputDir": "G:\\マイドライブ\\StableDiffusion\\output",
-      "width": 768,
-      "height": 768,
-      "numOfGenerates": 1,
+      "width": 512,
+      "height": 384,
+      "numOfGenerates": 4,
       "seed": -1,
       "guidanceScale": 7,
+      "steps": 15,
     }
 
     now = datetime.datetime.now()
@@ -66,6 +67,7 @@ def main(args):
     print(f"--- prompt: {inputData['prompt']}")
     print(f"--- negativePrompt: {inputData['negativePrompt']}")
     print(f"--- guidance scale: {inputData['guidanceScale']}")
+    print(f"--- steps: {inputData['steps']}")
 
     if isSafetenorFile(inputData['model']):
         print(f"--- model from file ... ")
@@ -79,10 +81,13 @@ def main(args):
             inputData['model'],
             torch_dtype=torchdtype)
 
-        #pipe.safety_checker = no_safety_checker
-    
+        if pipe.safety_checker != None:
+            pipe.safety_checker = lambda images, **kwargs: (images, [False] * len(images))
+
+    scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+    pipe.scheduler = scheduler
     pipe = pipe.to(deviceType)
-    # 
+
     compelProc = Compel(tokenizer=pipe.tokenizer, text_encoder=pipe.text_encoder)
     prompt = compelProc(inputData['prompt'])
     negativePrompt = compelProc(inputData['negativePrompt'])
@@ -96,7 +101,8 @@ def main(args):
         generator=generator,
         guidance_scale=inputData['guidanceScale'],
         negative_prompt_embeds=negativePrompt,
-        num_images_per_prompt=inputData['numOfGenerates']).images
+        num_images_per_prompt=inputData['numOfGenerates'],
+        num_inference_steps=inputData['steps']).images
 
     i = 1
     while len(images) > 0:

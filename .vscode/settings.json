@@ -2,5 +2,6 @@
     "editor.fontFamily": "Myrica M, Consolas,  monospace",
     "terminal.integrated.fontFamily": "Myrica M",
     "terminal.integrated.fontSize": 16,
-    "editor.fontSize": 14
+    "editor.fontSize": 14,
+    "editor.rulers": [120]
 }

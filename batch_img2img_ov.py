@@ -11,6 +11,10 @@ def readJson(filePath):
     with open(filePath, 'r') as f:
         ret = json.load(f)
 
+    # あとから作られたパラメータの初期値を。。
+    if not 'useOpenvino' in ret:
+        ret['useOpenvino'] = True
+
     return ret
 
 def main(args):
@@ -84,6 +88,8 @@ def main(args):
         ]
         if(setting['dumpSetting']):
             subArgs.append('--dump_setting')
+        if setting['useOpenvino']:
+            subArgs.append('--openvino')
 
         print(f"{' '.join(subArgs)}")
         subprocess.run(subArgs)
@@ -126,9 +132,8 @@ if __name__ == '__main__':
     parser.add_argument('--scheduler', 
                         dest='scheduler',
                         action='store',
-                        choices=["DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
-                        default="DDIMScheduler",
-                        help='inference steps')
+                        default="EulerAncestralDiscreteScheduler",
+                        help='scheduler which one of diffusers.schedulers')
     parser.add_argument('--seed',
                         type=int,
                         default=None,

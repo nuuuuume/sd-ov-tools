@@ -2,118 +2,93 @@ import sys
 import os
 import datetime
 import subprocess
+from pathlib import Path
+from convert_safetensors_to_ov import safetensors_to_ov
+from batch_t2i_config import make_configs
 
 def main(args):
 
     """ StableDiffusionを使って画像を生成します。
     """
 
-
     # venv上のpythonパスとt2iのスクリプトへのパス
-    venvPython = ".\\venv\\Scripts\\python.exe"
-    txt2imgPy = ".\\text2img_ov.py"
-
+    venv_python = r".\venv-3_10_6-sd\Scripts\python.exe"
+    t2i_py = r".\text2img_ov.py"
+    
     # 設定。一応複数持てるように。
     # スケジューラーやシード、画像サイズなんかをプロンプトごとに変えられるようにした。
-    configs = [
-        {
-            "useGpu": False,
-            "models": [
-                "models\\SakuraMix-v4-ov",
-                "models\\AnzuMix-v1-ov",
-            ],
-            "prompt": [
-                "crystal, 1girl, from below, looking down, sitting on bed, hand between legs, (flat chest:1.2), red eyes, (black long hair:1.3), pink frill thigh high socks, white and pink frill lolita, twintails, no shoes, (smile, blush), bed room, at night",
-            ], 
-            "negativePrompt": "(pink hair), (bad anatomy:1.3), (mutated legs:1.3), (bad feet:1.3), (bad legs:1.3), (missing legs:1.3), (extra legs:1.3), (bad hands:1.2), (mutated hands and fingers:1.2), (bad proportions), lip, nose, tooth, rouge, lipstick, eyeshadow, flat color, flat shading, (jpeg artifacts:1.4), (depth of field, bokeh, blurry, film grain, chromatic aberration, lens flare:1.0), (1boy, abs, muscular, rib:1.0), greyscale, monochrome, dusty sunbeams, trembling, motion lines, motion blur, emphasis lines, text",
-            "width": "512",
-            "height": "512",
-            "outputDir": "G:\\マイドライブ\\StableDiffusion\\output",
-            # 一回のプロンプトで何枚画像を作るか（内回り）
-            "numImages": "4",
-            #"seed": "253912154",
-            "seed": "-1",
-            "guidanceScale": "9.5",
-            # inferense steps
-            "steps": "15",
-            # scheduler は次の3つから選択らしい。本家？の方はたくさんあるんだけどなあ。 [ "DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
-            "scheduler": "DDIMScheduler",
-            "dumpSetting": True,
-        },
-        {
-            "useGpu": False,
-            "models": [
-                "models\\SakuraMix-v4-ov",
-                "models\\AnzuMix-v1-ov",
-            ],
-            "prompt": [
-                "crystal, 1girl, from below, looking at viewer, lie on bed on stomach, snooze, (flat chest:1.2), red eyes, (black long hair:1.3), pink frill thigh high socks, white and pink lolita, twintails, no shoes, (smile, blush), bed room, at night",
-            ], 
-            "negativePrompt": "(pink hair), (bad anatomy:1.3), (mutated legs:1.3), (bad feet:1.3), (bad legs:1.3), (missing legs:1.3), (extra legs:1.3), (bad hands:1.2), (mutated hands and fingers:1.2), (bad proportions), lip, nose, tooth, rouge, lipstick, eyeshadow, flat color, flat shading, (jpeg artifacts:1.4), (depth of field, bokeh, blurry, film grain, chromatic aberration, lens flare:1.0), (1boy, abs, muscular, rib:1.0), greyscale, monochrome, dusty sunbeams, trembling, motion lines, motion blur, emphasis lines, text",
-            "width": "512",
-            "height": "384",
-            "outputDir": "G:\\マイドライブ\\StableDiffusion\\output",
-            # 一回のプロンプトで何枚画像を作るか（内回り）
-            "numImages": "4",
-            #"seed": "253912154",
-            "seed": "-1",
-            "guidanceScale": "9.5",
-            # inferense steps
-            "steps": "15",
-            # scheduler は次の3つから選択らしい。本家？の方はたくさんあるんだけどなあ。 [ "DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
-            # DDIM が一番良好ぽい。
-            "scheduler": "DDIMScheduler",
-            "dumpSetting": True,
-        },
-    ]
-
     # プロンプトごとモデルごとに回る。
     # 1つのプロンプトを色々なモデルで試したいので。。 
+    configs = make_configs()
+
     for config in configs:
+        if 'enable' in config and not config['enable']:
+            continue
         for prompt in config['prompt']:
-            for model in config['models']:
-            
+            for m in config['models']:
+                model = m
                 modelName = os.path.splitext(os.path.basename(model))[0]
+                if config['use_openvino'] and model.endswith('.safetensors'):
+                    print("safetensors file detected. try convert safetensors to openvino ir format ...")
+                    model = f"models/{modelName}"
+                    if not safetensors_to_ov(m, model):
+                        print("failed to convert openvino ir format. skip.")
+                        continue
+
                 now = datetime.datetime.now()
 
-                outputDir = config['outputDir']
-                outputDir = os.path.join(outputDir, f"{now:%Y%m%d}")
-                os.makedirs(outputDir, exist_ok=True)
+                output_dir = config['output_dir']
+                output_dir = os.path.join(output_dir, f"{now:%Y%m%d}")
+                os.makedirs(output_dir, exist_ok=True)
 
                 # パラメータくっつけて自作のopenvino版t2iを起動。
                 args = [
-                    venvPython,
-                    txt2imgPy,
+                    venv_python,
+                    t2i_py,
                     '--model',
                     model,
                     '--prompt',
                     prompt,
                     '--negative_prompt',
-                    config['negativePrompt'],
+                    config['negative_prompt'],
                     '--width',
                     str(config['width']),
                     '--height',
                     str(config['height']),
-                    '--num_images_per_prompt',
-                    str(config['numImages']),
+                    '--batch_count',
+                    str(config['batch_count']),
+                    '--batch_size',
+                    str(config['batch_size']),
                     '--seed',
                     str(config['seed']),
                     '--guidance_scale',
-                    str(config['guidanceScale']),
+                    str(config['guidance_scale']),
                     '--steps',
                     str(config['steps']),
                     '--scheduler',
                     config['scheduler'],
                     '--output_dir',
-                    outputDir,
+                    output_dir,
                 ]
-                if config['useGpu']:
+                if config['use_gpu']:
                     args.append('--gpu')
 
-                if config['dumpSetting']:
+                if config['dump_setting']:
                     args.append('--dump_setting')
 
-                subprocess.run(args, shell=True)
+                if config['use_openvino']:
+                    args.append('--openvino')
+
+                if 'vae_path' in config:
+                    args.append('--vae_path')
+                    args.append(config['vae_path'])
+
+                if 'lora' in config:
+                    args.append('--lora')
+                    for lora in config['lora']:
+                        args.append(f"{lora['path']}:{lora['scale']}")
+
+                subprocess.run(args)
 
     print("done")
 

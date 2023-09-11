@@ -5,13 +5,11 @@ import time
 import argparse
 import json
 import numpy as np
+import torch
 from optimum.intel import OVStableDiffusionImg2ImgPipeline
 from lauda import stopwatch
-from diffusers import (
-    DDIMScheduler,
-    LMSDiscreteScheduler,
-    PNDMScheduler
-)
+from diffusers import StableDiffusionImg2ImgPipeline
+from diffusers.schedulers import *
 from PIL import Image
 
 def resizeImage(image, scale):
@@ -36,6 +34,72 @@ def printElapsed(watch, function):
     
     print(f"<<< {int(h)}:{int(m)}:{int(s)} spent.")
 
+def isSafetenorFile(model):
+    """ input.jsonのmodelがsafetensorsファイルの場合Trueを返します。
+    単にendswithしてるだけ。
+    """
+    return model.endswith("safetensors")
+
+def no_safety_checker(images, **kwargs):
+    return images, [False] * len(images)
+
+def makePipeline(args):
+
+    """
+    コマンドライン引数の情報からStableDiffusionPipelineとgeneratorを作成して返します
+    """
+
+    deviceType = "cuda" if args.useGpu else "cpu"
+    torchdtype = torch.float16 if args.useGpu else torch.float32
+
+    generator = torch.Generator(device=deviceType).manual_seed(args.seed)
+
+    if isSafetenorFile(args.model):
+        print(f"--- model from file ... ")
+        pipe = StableDiffusionImg2ImgPipeline.from_single_file(
+            args.model,
+            torch_dtype=torchdtype,
+            load_safety_checker=False)
+    else:
+        print(f"--- model from pretranined ... ")
+        pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+            args.model,
+            torch_dtype=torchdtype)
+
+        if pipe.safety_checker != None:
+            pipe.safety_checker = no_safety_checker
+
+    pipe = pipe.to(deviceType)
+
+    return (pipe, generator)
+
+def makeOpenvinoPipeline(args, w, h):
+
+    """
+    コマンドライン引数からOVStableDiffusionPipelineとgeneratorを作成して返します
+    """
+    generator = np.random.RandomState(args.seed)
+
+    # openvinoで読み込み
+    pipe = OVStableDiffusionImg2ImgPipeline.from_pretrained(
+        args.model,
+        compile=False)
+
+    # モデルのサイズを限定するとメモリが浮く 
+    pipe.reshape(batch_size=1,
+        height=h,
+        width=w,
+        num_images_per_prompt=args.numImages)
+
+    if args.useGpu:
+        # GPUを使う場合は以下を実行。t2iは動くけどi2iは画像が真っ黒になった（CPUだとi2iもちゃんとできる）
+        # 11世代CoreのIrisXEだとCPUで回したほうが速度は出るという、、。
+        pipe.to('GPU')
+
+    pipe.compile()    
+
+    return (pipe, generator)
+
 @stopwatch(callback=printElapsed)
 def main(args):
 
@@ -53,7 +117,8 @@ def main(args):
     print(f"--- guidance scale: {args.guidanceScale}")
     print(f"--- num images per prompt: {args.numImages}")
     print(f"--- scheduler: {args.scheduler}")
-
+    print(f"--- use openvino?: {args.useOpenvino}")
+    
     print(f"--- model from pretranined ... ")
     
     compile = False if args.useGpu else True
@@ -63,8 +128,6 @@ def main(args):
 
     generator = np.random.RandomState(seed)
     
-    compile = False if args.useGpu else True
-
     # 画像を開いて、Bicubicでリサイズ（ここでは劣化）、その後そのリサイズ後の画像にImg2Imgするらしい。
     srcImage = Image.open(args.srcImagePath).convert("RGB")
     sw, sh = srcImage.size
@@ -75,22 +138,7 @@ def main(args):
     modelName = os.path.splitext(os.path.basename(args.model))[0]
     print(f"--- model: {modelName}")
 
-    pipe = OVStableDiffusionImg2ImgPipeline.from_pretrained(
-        args.model,
-        compile=False)
-    pipe.scheduler = eval(args.scheduler).from_config(pipe.scheduler.config)
-    pipe.reshape(batch_size=1,
-        height=h,
-        width=w,
-        num_images_per_prompt=args.numImages)
-        
-    if args.useGpu:
-        pipe.to('GPU')
-    
-    pipe.compile()    
-
-    if pipe.safety_checker != None:
-        pipe.safety_checker = lambda images, **kwargs: (images, [False] * len(images))
+    pipe, genereator = makeOpenvinoPipeline(args, w, h) if args.useOpenvino else makePipeline(args)
 
     result = pipe(prompt=args.prompt,
         negative_prompt=args.negativePrompt,
@@ -199,13 +247,17 @@ if __name__ == '__main__':
                         dest='scheduler',
                         action='store',
                         type=str,
-                        choices=["DDIMScheduler", "PNDMScheduler", "LMSDiscreteScheduler"],
-                        default="DDIMScheduler",
+                        default="EulerAncestralDiscreteScheduler",
                         help='inference steps')
     parser.add_argument('--gpu', 
                         dest='useGpu', 
                         action='store_true', 
                         default=False)
+    parser.add_argument('--openvino',
+                        dest='useOpenvino',
+                        action='store_true',
+                        default=False,
+                        help="if True use openvino")
     parser.add_argument('--dump_setting', 
                         dest='dumpSetting', 
                         action='store_true', 

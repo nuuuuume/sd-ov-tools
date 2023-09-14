@@ -131,6 +131,7 @@ def ov_add_lora_model(pipe, state_dict_list, scale_list, ov_unet_model_xml_path,
             # check if this layer has been appended in lora_dict_list
             for ll in lora_dict_list:
                 if ll["name"] == lora_dict["name"]:
+                    print("appended!")
                     ll["value"] += lora_dict["value"] # all lora weights added together
                     flag = 1
             if flag == 0:
@@ -345,8 +346,14 @@ def diffusers_add_lora_model(pipe, lora_state_dict):
 
 def main(args):
 
-    lora_state_dict = load_file(args.lora_safetensors)
-    
+    lora_state_dict_list = []
+    scale_list = []
+    for file in args.lora_safetensors:
+        print(f"load lora from {file}")
+        lora_state_dict = load_file(file)
+        lora_state_dict_list.append(lora_state_dict)
+        scale_list.append(1.0)
+
     if args.use_diffusers:
         pipe = StableDiffusionPipeline.from_single_file(args.model)
         diffusers_add_lora_model(pipe, lora_state_dict)
@@ -361,7 +368,7 @@ def main(args):
         unet_model_xml_path = Path(args.model) / "unet" / "openvino_model.xml"
         text_encoder_xml_path = Path(args.model) / "text_encoder" / "openvino_model.xml"
 
-        ov_add_lora_model(pipe, [lora_state_dict], [1.0], unet_model_xml_path, text_encoder_xml_path)
+        ov_add_lora_model(pipe, lora_state_dict_list, scale_list, unet_model_xml_path, text_encoder_xml_path)
 
         pipe.compile()
 
@@ -378,7 +385,8 @@ if __name__ == '__main__':
                    type=str,
                    action='store',
                    dest='lora_safetensors',
-                   default=r'C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Lora\flat2.safetensors')
+                   nargs='*',
+                   default=[r'C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Lora\flat2.safetensors'])
     p.add_argument('--gpu',
                    action='store_true',
                    default=False,

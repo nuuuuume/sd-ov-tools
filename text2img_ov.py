@@ -152,87 +152,101 @@ def apply_ov_lora_model(pipe, state_dict_list, scale_list, ov_unet_model_xml_pat
     print(f"--- run_passes result: {rp_ret}")
 
 def map_ov_and_lora(lora_dict_list: list, 
-                    ov_unet_model_xml_path: str, 
-                    ov_text_encoder_model_path: str):
+                    ov_unet_xml_path: str, 
+                    ov_text_encoder_xml_path: str):
 
-    # 一旦unetだけ対応してみる。
-    # 2023/09/14 unetはそれっぽくLoRAが適用できたようだ！
-    with open(ov_unet_model_xml_path, 'rt') as f:
-        buf = f.read()
-    root = ET.fromstring(buf)      
-    layers = root.find('layers')
-    edges = root.find('edges')
+    # text_encoderはあったりなかったりだけど、とりあえず全部読んでまとめて処理してしまおう。。。
+    for xml in [ov_unet_xml_path, ov_text_encoder_xml_path]:
 
-    # constを探してその中でname=onnx:: で始まるlayerを見つける
-    # 見つけたlayerのidをedgesのfrom-layerで見つけ、to-layerを取得
-    # to-layerをidにもつlayerのnameをsdの形式に変換してlora_dict_listのnameとマッチさせる
-    # マッチしたlora_dict_listのnameをfrom-layerのnameに置換する。
-    # で、この関数は終わり。
-    # その後はrun_passesに流してConstantをMatchさせ、nameが一致する値にweight（value）を足し込む
-    # ようにしてみる。
-    ret = []
-    const_layer_list = layers.findall("./layer[@type='Const']")
-    for cl in const_layer_list:
+        with open(xml, 'rt') as f:
+            buf = f.read()
+        root = ET.fromstring(buf)      
+        layers = root.find('layers')
+        edges = root.find('edges')
 
-        # lnameはこんな感じのものが入っている
-        # onnx::MatMul_9138
-        lname = cl.attrib['name']
-        # onnx::MatMul始まりと .weight 終わりのみを対象にする
-        if not lname.startswith('onnx::MatMul') and not lname.endswith('.weight'):
-            continue
+        # constを探してその中でname=onnx:: で始まるlayerを見つける
+        # 見つけたlayerのidをedgesのfrom-layerで見つけ、to-layerを取得
+        # to-layerをidにもつlayerのnameをsdの形式に変換してlora_dict_listのnameとマッチさせる
+        # マッチしたlora_dict_listのnameをfrom-layerのnameに置換する。
+        # で、この関数は終わり。
+        # その後はrun_passesに流してConstantをMatchさせ、nameが一致する値にweight（value）を足し込む
+        # ようにしてみる。
+        ret = []
+        const_layer_list = layers.findall("./layer[@type='Const']")
+        for cl in const_layer_list:
 
-        lid = cl.attrib['id']
-        # edgeを探す
-        edge = edges.find(f"./edge[@from-layer='{lid}']")
-        if edge == None:
-            continue
+            # lnameはこんな感じのものが入っている
+            # onnx::MatMul_9138
+            lname = cl.attrib['name']
+            # onnx::MatMul始まりと .weight 終わりのみを対象にする
+            if not lname.startswith('onnx::MatMul') and not lname.endswith('.weight'):
+                continue
 
-        # 見つけたedgeからto-layerを取得、そのidをもつ
-        # to-layer が layer の id となる。
-        toid = edge.attrib['to-layer']
-        to_layer = layers.find(f"./layer[@id='{toid}']")
-        if to_layer == None:
-            continue
+            lid = cl.attrib['id']
+            # edgeを探す
+            edge = edges.find(f"./edge[@from-layer='{lid}']")
+            if edge == None:
+                continue
 
-        # to_q, to_k, to_v は onnx::MatMulの行き先のレイヤーに特定したい名前が入っている
-        # 一方 proj_in, proj_outは今回見ているレイヤーに特定したい名前が入っている。
-        target_name = lname if lname.endswith('.weight')  else to_layer.attrib['name']
+            # 見つけたedgeからto-layerを取得、そのidをもつ
+            # to-layer が layer の id となる。
+            toid = edge.attrib['to-layer']
+            to_layer = layers.find(f"./layer[@id='{toid}']")
+            if to_layer == None:
+                continue
 
-        # to_layerのnameはこんなものが入ってる
-        # ・to_q, to_k, to_v
-        # /down_blocks.0/attentions.1/transformer_blocks.0/attn2/to_q/MatMul
-        # ・proj_in, proj_out
-        # down_blocks.0.attentions.0.proj_in.weight
-        # loraのキーはこんな感じ
-        # ・to_q, to_k, to_v
-        # lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k.lora_down.weight
-        # ・proj_in, proj_out
-        # lora_unet_down_blocks_0_attentions_0_proj_in.lora_down.weight
-        # 実際は lora_unet_ は削除されていて、.以降は削除されているので、以下のようになる。
-        # ・to_q, to_k, to_v
-        # down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k
-        # ・proj_in, proj_out
-        # down_blocks_0_attentions_0_proj_in
-        # down_blocks_0_attentions_0_proj_out
-        # down_blocks_0_attentions_0.proj_in
-        # なので、to_layerのnameをこれに合わせる必要がある。
-        # 具体的には
-        # ・/を_に変換
-        # ・.を_に変換
-        # ・先頭が_だったら取り除く
-        # ・行末の _MatMulを取り除く
-        # ・行末の_weightを取り除く
-        target_name = target_name.replace('/', '_').replace('.', '_').replace('_MatMul', '').replace('_weight', '')
-        if target_name[0] == '_':
-            target_name = target_name[1:]
+            target_name = lname if lname.endswith('.weight')  else to_layer.attrib['name']
 
-        #print(f"{to_layer.attrib['name']} -> {target_name}")
-        # lora_state_dictで同じnameを持つものを探す
-        # 見つかったら、そのvalueをfrom-layerのnameをキーとした辞書に保存
-        for ll in lora_dict_list:
-            if ll["name"] == target_name:
-                #print(f"replace! {target_name} -> {lname}")
-                ll["name"] = lname
+            # 【unet】
+            # ・to_q, to_k, to_v
+            # onnx::MatMul始まりのlayerを探す。見つかったidでedge.from-layerを検索し、ヒットしたedgeのto-layerをidにもつlayerを取得
+            # そのlayer.nameを見ると以下のようなものがある。
+            # /down_blocks.0/attentions.1/transformer_blocks.0/attn2/to_q/MatMul
+            # ・proj_in, proj_out
+            # こちらはto_qなどのような形でなく、const値としてダイレクトに下記のようなnameを持つlayerがあるので、それを使う
+            # down_blocks.0.attentions.0.proj_in.weight
+            # loraのキーはこんな感じ
+            # ・to_q, to_k, to_v
+            # lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k.lora_down.weight
+            # ・proj_in, proj_out
+            # lora_unet_down_blocks_0_attentions_0_proj_in.lora_down.weight
+            # 実際は lora_unet_ は削除されていて、.以降は削除されているので、以下のようになる。
+            # ・to_q, to_k, to_v
+            # down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k
+            # ・proj_in, proj_out
+            # down_blocks_0_attentions_0_proj_in
+            # down_blocks_0_attentions_0_proj_out
+            # down_blocks_0_attentions_0.proj_in
+            # なので、to_layerのnameをこれに合わせる必要がある。
+            # 【text_encoder】
+            # 基本的にはonnx::MatMul始まりのconstを見つけて行き先のnameを取得するというunetのto_qとかのやり方と同じっぽい。
+            # proj_inみたいな方式の直接参照できる形のものはなさそう。
+            # nameの種類としては大きくこの２パターン。両方ともloraにも似たような定義があったので置換ルールはunetと同じで行けそう
+            # 45:onnx::MatMul_2260:0[Const] -> 46:/text_model/encoder/layers.0/self_attn/q_proj/MatMul:1[MatMul]
+            # 253:onnx::MatMul_2281:0[Const] -> 254:/text_model/encoder/layers.0/mlp/fc1/MatMul:1[MatMul]
+            # lora_te_text_model_encoder_layers_0_self_attn_k_proj.lora_down.weight torch.Size([8, 768])
+            # lora_te_text_model_encoder_layers_0_self_attn_k_proj.lora_up.weight torch.Size([768, 8])
+            # lora_te_text_model_encoder_layers_10_mlp_fc1.lora_down.weight torch.Size([8, 768])
+            # lora_te_text_model_encoder_layers_10_mlp_fc1.lora_up.weight torch.Size([3072, 8])
+            # 具体的には
+            # ・/を_に変換
+            # ・.を_に変換
+            # ・先頭が_だったら取り除く
+            # ・行末の _MatMulを取り除く
+            # ・行末の_weightを取り除く
+            target_name = target_name.replace('/', '_').replace('.', '_').replace('_MatMul', '').replace('_weight', '')
+            if target_name[0] == '_':
+                target_name = target_name[1:]
+
+            #print(f"{to_layer.attrib['name']} -> {target_name}")
+            # lora_state_dictで同じnameを持つものを探す
+            # 見つかったら、そのvalueをfrom-layerのnameをキーとした辞書に保存
+            for ll in lora_dict_list:
+                if ll["name"] == target_name:
+                    ll["name"] = lname
+
+    #for  ld in lora_dict_list:
+    #    print(ld['name'])
 
     return lora_dict_list
 

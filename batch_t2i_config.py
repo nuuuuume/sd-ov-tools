@@ -103,6 +103,7 @@ japanese temple festival, at night",
             "scheduler": "DPM++ 2M Karras",
             "dump_setting": True,
             # diffusersであれば効くようになった。
+            # openvinoでも動くようになった。
             "lora": [
                 {
                     "path": r"C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Lora\flat2.safetensors",
@@ -110,7 +111,7 @@ japanese temple festival, at night",
                 },
                 {
                     "path": r"C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Lora\brighter-eye2.safetensors",
-                    "scale": 0.5,
+                    "scale": 0.2,
                 },
             ],
         },

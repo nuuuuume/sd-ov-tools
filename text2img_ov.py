@@ -8,6 +8,8 @@ import re
 import numpy as np
 import cv2 as cv
 import torch
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from diffusers import StableDiffusionPipeline, AutoencoderKL
 from openvino.runtime import Core, Model, Type
 from optimum.intel import OVStableDiffusionPipeline
@@ -43,15 +45,11 @@ class InsertLoRA(MatcherPass):
                 # 戦闘の /　を消す、/と.を_に変換すると同じような書式になるが、Cast_1あたりの部分が合わない。
                 # なのでこのコードだとAddに入らず何も起きない.
                 # to_q,k,vはMatMulにしかないので、そのあたりで披露か。
-                fname_replaced = root.get_friendly_name().replace('.', '_').replace('/', '_')
-                print(f"replace:{fname_replaced}")
-                print(f"y      :{y['name']}")
- 
-                #if root.get_friendly_name().replace('.','_').replace('_weight','') == y["name"]:
-                if fname_replaced == y["name"]:
-                    #print(f"matched!: {y['name']}")
+                 if root.get_friendly_name() == y["name"]:
                     consumers = root_output.get_target_inputs()
-                    lora_weights = ops.constant(y["value"], Type.i64, name=y["name"])
+                    # openvinoはsdからみて行列が反転している？？
+                    lora_weights = ops.constant(y["value"].mT, Type.f32, name=y["name"])
+                    #print(f"matched! node shape: {root.shape} lora_weights shape: {lora_weights.shape}")
                     add_lora = ops.add(root, lora_weights, auto_broadcast='numpy')
                     for consumer in consumers:
                         consumer.replace_source_output(add_lora.output(0))
@@ -66,7 +64,7 @@ class InsertLoRA(MatcherPass):
 
         self.register_matcher(Matcher(param,"InsertLoRA"), callback)
 
-def add_lora_model(pipe, state_dict, scale_list):
+def apply_ov_lora_model(pipe, state_dict_list, scale_list, ov_unet_model_xml_path, ov_text_encoder_model_path):
 
     """
     add lora weights
@@ -74,10 +72,11 @@ def add_lora_model(pipe, state_dict, scale_list):
     parameters:
         pipe: 
             openvino stablediffusion pipeline
-        state_dict:
+        state_dict_list:
             lora weight list
         scale_list:
             lora scale list 
+        
     """
 
     visited = []
@@ -88,9 +87,9 @@ def add_lora_model(pipe, state_dict, scale_list):
     flag = 0
     manager = Manager()
     # この辺は大丈夫ぽい。
-    for iter in range(len(state_dict)):
+    for iter in range(len(state_dict_list)):
         visited = []
-        for key in state_dict[iter]:
+        for key in state_dict_list[iter]:
             if ".alpha" in key or key in visited:
                 continue
             if "text" in key:
@@ -110,18 +109,21 @@ def add_lora_model(pipe, state_dict, scale_list):
                 pair_keys.append(key.replace("lora_up", "lora_down"))
 
             # update weight
-            if len(state_dict[iter][pair_keys[0]].shape) == 4:
-                weight_up = state_dict[iter][pair_keys[0]].squeeze(3).squeeze(2).to(torch.float32)
-                weight_down = state_dict[iter][pair_keys[1]].squeeze(3).squeeze(2).to(torch.float32)
+            if len(state_dict_list[iter][pair_keys[0]].shape) == 4:
+                # len(shape) == 4 のは proj_in proj_outくらいらしい。
+                weight_up = state_dict_list[iter][pair_keys[0]].squeeze(3).squeeze(2).to(torch.float32)
+                weight_down = state_dict_list[iter][pair_keys[1]].squeeze(3).squeeze(2).to(torch.float32)
                 # ここでloraに設定した係数（scale値、、1とか0.5とかflat2だと-1とか）がのる？
                 lora_weights = scale_list[iter] * torch.mm(weight_up, weight_down).unsqueeze(2).unsqueeze(3)
                 lora_dict.update(value=lora_weights)
             else:
-                weight_up = state_dict[iter][pair_keys[0]].to(torch.float32)
-                weight_down = state_dict[iter][pair_keys[1]].to(torch.float32)
+                # その他、は2次元。基本はこちらの値を相手にする形になるのかねえ？
+                weight_up = state_dict_list[iter][pair_keys[0]].to(torch.float32)
+                weight_down = state_dict_list[iter][pair_keys[1]].to(torch.float32)
                 # ここでloraに設定した係数（scale値、、1とか0.5とかflat2だと-1とか）がのる？
                 lora_weights = scale_list[iter] * torch.mm(weight_up, weight_down)
                 lora_dict.update(value=lora_weights)
+
             # check if this layer has been appended in lora_dict_list
             for ll in lora_dict_list:
                 if ll["name"] == lora_dict["name"]:
@@ -134,21 +136,105 @@ def add_lora_model(pipe, state_dict, scale_list):
                 visited.append(item)
             flag = 0
 
+    # sdのname -> ov name
+    ov_lora_dict_list = map_ov_and_lora(lora_dict_list, ov_unet_model_xml_path, ov_text_encoder_model_path)
+
     # 上で作った加工済みのlora情報をregister_pass -> run_passesと流し、その中でConvertの値にlora_の値をAddする、
     # という流れになっているポイ。
-    # が、どうも実際モデルの中身を見るとConvertが走ってない（Convertはキャスト命令、I32->F32とか）
-    # 要するに、モデルの値（Const）をConvなりMatmulする手前にここで作成したLoRAのウェイトをAddできれば良いので、
-    # FromでConst、ToでこのLoRAのキー、を探して、そこにAddするようにすればいいのかね？？？
-    # という仮説でやってみよー。
-    manager.register_pass(InsertLoRA(lora_dict_list))
+    manager.register_pass(InsertLoRA(ov_lora_dict_list))
     if (True in [('type', 'text_encoder') in l.items() for l in lora_dict_list]):
         print("--- text encoder run_passes")
-        manager.run_passes(pipe.text_encoder.model)
+        rp_ret = manager.run_passes(pipe.text_encoder.model)
         print(f"--- run_passes result: {rp_ret}")
 
     print("--- unet run_passes")
     rp_ret = manager.run_passes(pipe.unet.model)
     print(f"--- run_passes result: {rp_ret}")
+
+def map_ov_and_lora(lora_dict_list: list, 
+                    ov_unet_model_xml_path: str, 
+                    ov_text_encoder_model_path: str):
+
+    # 一旦unetだけ対応してみる。
+    # 2023/09/14 unetはそれっぽくLoRAが適用できたようだ！
+    with open(ov_unet_model_xml_path, 'rt') as f:
+        buf = f.read()
+    root = ET.fromstring(buf)      
+    layers = root.find('layers')
+    edges = root.find('edges')
+
+    # constを探してその中でname=onnx:: で始まるlayerを見つける
+    # 見つけたlayerのidをedgesのfrom-layerで見つけ、to-layerを取得
+    # to-layerをidにもつlayerのnameをsdの形式に変換してlora_dict_listのnameとマッチさせる
+    # マッチしたlora_dict_listのnameをfrom-layerのnameに置換する。
+    # で、この関数は終わり。
+    # その後はrun_passesに流してConstantをMatchさせ、nameが一致する値にweight（value）を足し込む
+    # ようにしてみる。
+    ret = []
+    const_layer_list = layers.findall("./layer[@type='Const']")
+    for cl in const_layer_list:
+
+        # lnameはこんな感じのものが入っている
+        # onnx::MatMul_9138
+        lname = cl.attrib['name']
+        # onnx::MatMul始まりと .weight 終わりのみを対象にする
+        if not lname.startswith('onnx::MatMul') and not lname.endswith('.weight'):
+            continue
+
+        lid = cl.attrib['id']
+        # edgeを探す
+        edge = edges.find(f"./edge[@from-layer='{lid}']")
+        if edge == None:
+            continue
+
+        # 見つけたedgeからto-layerを取得、そのidをもつ
+        # to-layer が layer の id となる。
+        toid = edge.attrib['to-layer']
+        to_layer = layers.find(f"./layer[@id='{toid}']")
+        if to_layer == None:
+            continue
+
+        # to_q, to_k, to_v は onnx::MatMulの行き先のレイヤーに特定したい名前が入っている
+        # 一方 proj_in, proj_outは今回見ているレイヤーに特定したい名前が入っている。
+        target_name = lname if lname.endswith('.weight')  else to_layer.attrib['name']
+
+        # to_layerのnameはこんなものが入ってる
+        # ・to_q, to_k, to_v
+        # /down_blocks.0/attentions.1/transformer_blocks.0/attn2/to_q/MatMul
+        # ・proj_in, proj_out
+        # down_blocks.0.attentions.0.proj_in.weight
+        # loraのキーはこんな感じ
+        # ・to_q, to_k, to_v
+        # lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k.lora_down.weight
+        # ・proj_in, proj_out
+        # lora_unet_down_blocks_0_attentions_0_proj_in.lora_down.weight
+        # 実際は lora_unet_ は削除されていて、.以降は削除されているので、以下のようになる。
+        # ・to_q, to_k, to_v
+        # down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k
+        # ・proj_in, proj_out
+        # down_blocks_0_attentions_0_proj_in
+        # down_blocks_0_attentions_0_proj_out
+        # down_blocks_0_attentions_0.proj_in
+        # なので、to_layerのnameをこれに合わせる必要がある。
+        # 具体的には
+        # ・/を_に変換
+        # ・.を_に変換
+        # ・先頭が_だったら取り除く
+        # ・行末の _MatMulを取り除く
+        # ・行末の_weightを取り除く
+        target_name = target_name.replace('/', '_').replace('.', '_').replace('_MatMul', '').replace('_weight', '')
+        if target_name[0] == '_':
+            target_name = target_name[1:]
+
+        #print(f"{to_layer.attrib['name']} -> {target_name}")
+        # lora_state_dictで同じnameを持つものを探す
+        # 見つかったら、そのvalueをfrom-layerのnameをキーとした辞書に保存
+        for ll in lora_dict_list:
+            if ll["name"] == target_name:
+                #print(f"replace! {target_name} -> {lname}")
+                ll["name"] = lname
+
+    return lora_dict_list
 
 def print_elapsed(watch, function):
     m, s = divmod(watch.elapsed_time, 60)
@@ -438,6 +524,9 @@ def make_openvino_pipeline(args):
     """
     generator = np.random.RandomState(args.seed)
 
+    unet_xml_path = Path(args.model) / "unet" / "openvino_model.xml"
+    text_encoder_xml_path = Path(args.model) / "text_encoder" / "openvino_model.xml"
+
     # openvinoで読み込み
     pipe = OVStableDiffusionPipeline.from_pretrained(
         args.model,
@@ -467,7 +556,7 @@ def make_openvino_pipeline(args):
             state_dict.append(load_file(path)) #state_dict is list of lora list
             scale_list.append(float(scale))
 
-        add_lora_model(pipe, state_dict, scale_list)
+        apply_ov_lora_model(pipe, state_dict, scale_list, unet_xml_path, text_encoder_xml_path)
    
     if args.use_gpu:
         # GPUを使う場合は以下を実行。t2iは動くけどi2iは画像が真っ黒になった（CPUだとi2iもちゃんとできる）

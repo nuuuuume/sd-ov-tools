@@ -9,7 +9,7 @@ def analyze_ov_model(ov_model_xml_path):
     root = ET.fromstring(buf)
     layers = root.find('layers')
     edges = root.find('edges')
-    with open('model.txt', 'w') as f:
+    with open(args.dump_path, 'w') as f:
         for edge in edges.findall('edge'):
             from_layer = edge.attrib['from-layer']
             from_port = edge.attrib['from-port']
@@ -20,13 +20,13 @@ def analyze_ov_model(ov_model_xml_path):
             from_port_xpath = f"./*/port[@id='{from_port}']"
             from_layer_node = layers.find(from_layer_xpath)
 
-            from_name = f"{from_layer_node.attrib['name']}:{from_port}[{from_layer_node.attrib['type']}]"
+            from_name = f"{from_layer}:{from_layer_node.attrib['name']}:{from_port}[{from_layer_node.attrib['type']}]"
 
             to_layer_xpath = f"./layer[@id='{to_layer}']" 
             to_port_xpath = f"./*/port[@id='{to_port}']"
             to_layer_node = layers.find(to_layer_xpath)
             to_port_node = to_layer.find(to_port_xpath)
-            to_name = f"{to_layer_node.attrib['name']}:{to_port}[{to_layer_node.attrib['type']}]"
+            to_name = f"{to_layer}:{to_layer_node.attrib['name']}:{to_port}[{to_layer_node.attrib['type']}]"
 
             f.write(f"{from_name} -> {to_name}\n")
 
@@ -37,7 +37,11 @@ if __name__ == '__main__':
     p.add_argument('--ov_model_xml_path',
                    dest='ov_model_xml_path',
                    type=str,
-                   default=r'models\anzuMix-v1-ov\unet\openvino_model.xml')
-
+                   default=r'models\anzuMix-v1-ov\text_encoder\openvino_model.xml')
+    p.add_argument('--dump_path',
+                   dest='dump_path',
+                   type=str,
+                   default='model.txt')
+    
     args = p.parse_args()
     analyze_ov_model(args.ov_model_xml_path)

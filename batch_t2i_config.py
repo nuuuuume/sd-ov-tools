@@ -39,7 +39,6 @@ def make_configs():
                     "scale": <Float>.
                 }
             ],
-            ? "lora_scale": <Float>,
             ? "vae_path": <Text>,
         }
     ]
@@ -51,9 +50,9 @@ def make_configs():
             "use_openvino": True,
             "models": [
             #    "anzu_flat",
+                r"models\AnzuMix-v1-ov",
+                r"models\IrisMix-v5b-ov",
                 r"C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Stable-diffusion\AsagaoMix-v2.safetensors",
-            #    r"models\IrisMix-v5b-ov",
-            #    r"models\AnzuMix-v1-ov",
             ],
             "prompt": [
                 # 下アングル(from below)でこちらを見つめる(縦長画像のほうが意図通り出やすい) warizaを入れるとあんまり下からにならない。
@@ -72,14 +71,14 @@ def make_configs():
                 # 髪型（twintails, straight hair）
                 # おばにー（thigh high socks, over the knee socksよりthigh high socksのほうが出やすい）
                 # 水着（swimsuit, bikini, strings bikini）
-                # 巫女さん全身
-                "1girl, looking at viewer,  \
-sitting, own hands together, \
+
+                "1girl, looking at viewer, from below, \
+standing, full body,  \
 (flat chest:1.2), red eyes, \
 (bright black long hair:1.2), twintails, \
-frill white miko, red short skirt, \
-(embarrassed), \
-at japanese garden", 
+frill black flower pattern yukata, frill black shortskirt, thigh high socks, \
+(smile, happy, blush), \
+japanese temple festival, at night", 
 ##                # 鉄板
 ##                "1girl, from above, looking down,  \
 ##wariza, \
@@ -100,17 +99,20 @@ at japanese garden",
             "seed": "-1",
             "guidance_scale": "9.5",
             # inferense steps
-            "steps": "30",
+            "steps": "20",
             "scheduler": "DPM++ 2M Karras",
             "dump_setting": True,
             # diffusersであれば効くようになった。
             "lora": [
                 {
                     "path": r"C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Lora\flat2.safetensors",
-                    "scale": -0.5,
-                }
+                    "scale": -0.3,
+                },
+                {
+                    "path": r"C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Lora\brighter-eye2.safetensors",
+                    "scale": 0.5,
+                },
             ],
-            #"lora_scale": 1.5,
         },
         {
             "enable": False, 

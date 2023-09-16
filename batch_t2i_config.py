@@ -46,13 +46,11 @@ def make_configs():
 
     configs = [
         {
-            "use_gpu": True, 
+            "use_gpu": False, 
             "use_openvino": True,
             "models": [
-            #    "anzu_flat",
                 r"models\AnzuMix-v1-ov",
                 r"models\IrisMix-v5b-ov",
-                r"C:\Users\webnu\source\repos\StableDiffusion\stable-diffusion-webui\models\Stable-diffusion\AsagaoMix-v2.safetensors",
             ],
             "prompt": [
                 # 下アングル(from below)でこちらを見つめる(縦長画像のほうが意図通り出やすい) warizaを入れるとあんまり下からにならない。
@@ -72,13 +70,13 @@ def make_configs():
                 # おばにー（thigh high socks, over the knee socksよりthigh high socksのほうが出やすい）
                 # 水着（swimsuit, bikini, strings bikini）
 
-                "1girl, looking at viewer, from below, \
-standing, full body,  \
+                "1girl, looking back, from below, from behind,\
+on all fours, \
 (flat chest:1.2), red eyes, \
-(bright black long hair:1.2), twintails, \
-frill black flower pattern yukata, frill black shortskirt, thigh high socks, \
-(smile, happy, blush), \
-japanese temple festival, at night", 
+(bright white long hair:1.2), twintails, fox ears, fox tail, \
+frill blouse, frill black short skirt, thigh high socks, \
+(embarrassed), \
+in hotel bedroom, at night", 
 ##                # 鉄板
 ##                "1girl, from above, looking down,  \
 ##wariza, \
@@ -90,7 +88,7 @@ japanese temple festival, at night",
 
             ], 
             "negative_prompt": "<EasyNegative>, text, nsfw",
-            "width": "512",
+            "width": "1024",
             "height": "768",
             "output_dir": r"G:\マイドライブ\StableDiffusion\output",
             "batch_count": "2",

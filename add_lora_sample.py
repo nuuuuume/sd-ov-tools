@@ -250,24 +250,14 @@ def map_ov_and_lora(lora_dict_list: list,
             for ll in lora_dict_list:
                 if ll["name"] == target_name:
                     print(f"replace! {target_name} -> {lname}")
-                    #ov_lora_dict = {
-                    #    'name': lname,
-                    #    'value': ll['value']
-                    #}
-                    #print(ll['value'].shape)
-                    #ret.append(ov_lora_dict)
                     ll["name"] = lname
 
     for  ld in lora_dict_list:
         print(ld['name'])
 
     return lora_dict_list
-    #print(f"lora_dict_list:{len(lora_dict_list)} replaced:{len(ret)}")
-
-    #return lora_dict_list + ret
 
 def diffusers_add_lora_model(pipe, lora_state_dict):
-
 
     """
     diffusers モデルに対するLoRAの適用。

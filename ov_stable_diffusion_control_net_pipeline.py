@@ -14,6 +14,9 @@ from safetensors.torch import load_file
 import time
 import cv2
 
+# https://github.com/FionaZZ92/OpenVINO_sample/blob/master/SD_controlnet/run_pipe.py
+# これを抜き出したもの
+
 def parse_args() -> argparse.Namespace:
     """Parse and return command line arguments."""
     parser = argparse.ArgumentParser(add_help=False)

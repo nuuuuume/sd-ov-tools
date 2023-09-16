@@ -6,7 +6,6 @@ import argparse
 import json
 import re
 import numpy as np
-import cv2 as cv
 import torch
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -22,6 +21,9 @@ from remove_blob import remove_model_blobs
 
 class InsertLoRA(MatcherPass):
     
+    # https://github.com/FionaZZ92/OpenVINO_sample/blob/master/SD_controlnet/run_pipe.py
+    # このソースをべーすに改造した。
+
     def __init__(self,lora_dict_list):
         MatcherPass.__init__(self)
         self.model_changed = False
@@ -78,6 +80,9 @@ def apply_ov_lora_model(pipe, state_dict_list, scale_list, ov_unet_model_xml_pat
             lora scale list 
         
     """
+
+    # https://github.com/FionaZZ92/OpenVINO_sample/blob/master/SD_controlnet/run_pipe.py
+    # このソースをべーすに改造した。
 
     visited = []
     lora_dict = {}
@@ -154,6 +159,18 @@ def apply_ov_lora_model(pipe, state_dict_list, scale_list, ov_unet_model_xml_pat
 def map_ov_and_lora(lora_dict_list: list, 
                     ov_unet_xml_path: str, 
                     ov_text_encoder_xml_path: str):
+
+    """
+    loraのキーをopenvinoのキーにマップします
+
+    Parameters:
+        lora_dict_list: list
+            loraの読込み結果リスト
+
+        ov_unet_xml_path: str
+
+        ov_text_encoder_xml_path:
+    """
 
     # text_encoderはあったりなかったりだけど、とりあえず全部読んでまとめて処理してしまおう。。。
     for xml in [ov_unet_xml_path, ov_text_encoder_xml_path]:
@@ -244,9 +261,6 @@ def map_ov_and_lora(lora_dict_list: list,
             for ll in lora_dict_list:
                 if ll["name"] == target_name:
                     ll["name"] = lname
-
-    #for  ld in lora_dict_list:
-    #    print(ld['name'])
 
     return lora_dict_list
 
@@ -546,12 +560,6 @@ def make_openvino_pipeline(args):
         args.model,
         compile=False)
 
-    # モデルのサイズを限定するとメモリが浮く 
-    pipe.reshape(batch_size=1,
-        height=args.height,
-        width=args.width,
-        num_images_per_prompt=args.batch_size)
- 
     # apply textual_inversion
     load_textual_inversion(pipe, args.prompt)
     load_textual_inversion(pipe, args.negative_prompt)
@@ -577,31 +585,16 @@ def make_openvino_pipeline(args):
         # 11世代CoreのIrisXEだとCPUで回したほうが速度は出るという、、。
         pipe.to('GPU')
 
+    # モデルのサイズを限定するとメモリが浮く 
+    pipe.reshape(batch_size=1,
+        height=args.height,
+        width=args.width,
+        num_images_per_prompt=args.batch_size)
+ 
+    pipe.half()
+
     pipe.compile()
     return (pipe, generator)
-
-##    text_inputs = pipe.tokenizer(
-##        "1girl, super cute",
-##        padding="max_length",
-##        max_length=pipe.tokenizer.model_max_length,
-##        truncation=True,
-##        return_tensors="np",
-##    )
-##    text_input_ids = text_inputs.input_ids
-##
-##    core = Core()
-##    # ModelをコンパイルするとCompiledModelができる（request）
-##    request = core.compile_model(pipe.text_encoder.model)
-##    # CompliedModelを実行するとOVDictができる。このキーはConstOutputというもの
-##    tecall = request(text_input_ids)
-##    # CompiledModelのoutputメソッドの0番目を取得するとConstOutputが入手できる
-##    mo = request.output(0)
-##    print(type(request))
-##    print(type(tecall))
-##    print(len(tecall.values()))
-##    print(type(mo))
-##    # OVDictから最初のConstOutputを使った結果を使う
-##    text_embeddings = tecall[mo]
 
 def load_textual_inversion(pipe, prompt):
     """

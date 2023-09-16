@@ -160,6 +160,8 @@ cython_debug/
 #.idea/
 venv-3_10_6-sd/
 models/
+textual-inversions/
+diffusers_model/
 *.png
 *.exe
 dump/

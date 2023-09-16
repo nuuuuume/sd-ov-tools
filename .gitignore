@@ -162,6 +162,7 @@ venv-3_10_6-sd/
 models/
 textual-inversions/
 diffusers_model/
+samples/
 *.png
 *.exe
 dump/
